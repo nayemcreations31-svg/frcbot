@@ -48,10 +48,24 @@ def get_server_config(guild_id):
             "automod_role": None,
             "automod_whitelist": [],
             "automod_log_channel": None,
-            "mod_log_channel": None
+            "mod_log_channel": None,
+            "global_log_channel": None,
+            "quarantine_role": None,
+            "quarantine_saved_roles": {}
         }
         save_db(db)
-    return db[gid]
+    
+    # Ensure new keys exist for old database entries
+    config = db[gid]
+    if "global_log_channel" not in config:
+        config["global_log_channel"] = None
+    if "quarantine_role" not in config:
+        config["quarantine_role"] = None
+    if "quarantine_saved_roles" not in config:
+        config["quarantine_saved_roles"] = {}
+    save_db(db)
+    
+    return config
 
 def get_prefix(bot, message):
     if not message.guild:
@@ -65,8 +79,8 @@ FORBIDDEN_WORDS = ["badword1", "badword2", "spamlink.com"]
 
 # Terminal Startup Banner
 print("=" * 45)
-print("THIS BOT DEVOLOP BY ACID")
-print("BUY ME COFFE binence uid = 1016468667")
+print("THIS BOT DEVELOPED BY ACID")
+print("BUY ME COFFEE binance uid = 1016468667")
 print("=" * 45)
 
 def send_startup_info():
@@ -97,6 +111,24 @@ intents.members = True
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
+async def send_global_log(guild, title, description, color=discord.Color.blue()):
+    """Helper function to log all bot actions into global log channel"""
+    config = get_server_config(guild.id)
+    log_cid = config.get("global_log_channel") or config.get("mod_log_channel")
+    if log_cid:
+        log_chan = guild.get_channel(log_cid)
+        if log_chan:
+            embed = discord.Embed(
+                title=title,
+                description=description,
+                color=color,
+                timestamp=datetime.datetime.now(datetime.timezone.utc)
+            )
+            try:
+                await log_chan.send(embed=embed)
+            except Exception:
+                pass
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
@@ -108,7 +140,7 @@ async def on_ready():
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
 
-# ================= ⚙️ CONFIG & PREFIX COMMANDS =================
+# ================= ⚙️ CONFIG & LOG COMMANDS =================
 
 @bot.tree.command(name="setprefix", description="Change bot prefix for this server")
 @commands.has_permissions(administrator=True)
@@ -117,8 +149,27 @@ async def setprefix(interaction: discord.Interaction, prefix: str):
     config["prefix"] = prefix
     save_db(db)
     await interaction.response.send_message(f"✅ Server prefix successfully updated to: `{prefix}`", ephemeral=True)
+    await send_global_log(interaction.guild, "⚙️ Prefix Changed", f"Prefix updated to `{prefix}` by {interaction.user.mention}")
 
-# ================= 🛡️ ANTINUKE SYSTEM =================
+@bot.tree.command(name="setlogchannel", description="Set main action log channel where all logs will be sent")
+@commands.has_permissions(administrator=True)
+async def setlogchannel(interaction: discord.Interaction, channel: discord.TextChannel):
+    config = get_server_config(interaction.guild.id)
+    config["global_log_channel"] = channel.id
+    save_db(db)
+    await interaction.response.send_message(f"✅ Global log channel set to {channel.mention}", ephemeral=True)
+    await send_global_log(interaction.guild, "📜 Log Channel Configured", f"Global action logs will now be sent to {channel.mention} by {interaction.user.mention}")
+
+@bot.tree.command(name="setquarantinerole", description="Set the Quarantine role for Anti-Nuke punishments")
+@commands.has_permissions(administrator=True)
+async def setquarantinerole(interaction: discord.Interaction, role: discord.Role):
+    config = get_server_config(interaction.guild.id)
+    config["quarantine_role"] = role.id
+    save_db(db)
+    await interaction.response.send_message(f"✅ Quarantine role set to {role.mention}", ephemeral=True)
+    await send_global_log(interaction.guild, "🛡️ Quarantine Role Configured", f"Quarantine role updated to {role.mention} by {interaction.user.mention}")
+
+# ================= 🛡️ ANTINUKE & QUARANTINE SYSTEM =================
 
 @bot.tree.command(name="antinuke", description="Enable or disable Antinuke feature")
 @commands.has_permissions(administrator=True)
@@ -128,6 +179,7 @@ async def antinuke(interaction: discord.Interaction, status: bool):
     save_db(db)
     state = "Enabled 🟢" if status else "Disabled 🔴"
     await interaction.response.send_message(f"🛡️ Antinuke system is now {state}", ephemeral=True)
+    await send_global_log(interaction.guild, "🛡️ Anti-Nuke Status Changed", f"Anti-Nuke system was **{state}** by {interaction.user.mention}")
 
 @bot.tree.command(name="antinukewhitelist", description="Add or remove member from Antinuke whitelist")
 @commands.has_permissions(administrator=True)
@@ -140,6 +192,7 @@ async def antinukewhitelist(interaction: discord.Interaction, action: str, membe
             w_list.append(member.id)
             save_db(db)
             await interaction.response.send_message(f"✅ {member.mention} added to Antinuke Whitelist.", ephemeral=True)
+            await send_global_log(interaction.guild, "🛡️ Whitelist Updated", f"{member.mention} added to Anti-Nuke Whitelist by {interaction.user.mention}")
         else:
             await interaction.response.send_message(f"⚠️ {member.mention} is already in the whitelist.", ephemeral=True)
     elif action.lower() == "remove":
@@ -147,29 +200,98 @@ async def antinukewhitelist(interaction: discord.Interaction, action: str, membe
             w_list.remove(member.id)
             save_db(db)
             await interaction.response.send_message(f"❌ {member.mention} removed from Antinuke Whitelist.", ephemeral=True)
+            await send_global_log(interaction.guild, "🛡️ Whitelist Updated", f"{member.mention} removed from Anti-Nuke Whitelist by {interaction.user.mention}")
         else:
             await interaction.response.send_message(f"⚠️ {member.mention} is not in the whitelist.", ephemeral=True)
     else:
         await interaction.response.send_message("Please use action: `add` or `remove`.", ephemeral=True)
+
+@bot.tree.command(name="unquarantine", description="Restore all roles to a quarantined member")
+@commands.has_permissions(administrator=True)
+async def unquarantine(interaction: discord.Interaction, member: discord.Member):
+    config = get_server_config(interaction.guild.id)
+    saved_dict = config.get("quarantine_saved_roles", {})
+    mem_id_str = str(member.id)
+
+    q_role_id = config.get("quarantine_role")
+    q_role = interaction.guild.get_role(q_role_id) if q_role_id else None
+
+    # Remove Quarantine Role if present
+    if q_role and q_role in member.roles:
+        try:
+            await member.remove_roles(q_role, reason="Unquarantined by Admin")
+        except Exception:
+            pass
+
+    if mem_id_str in saved_dict:
+        role_ids = saved_dict[mem_id_str]
+        roles_to_add = [interaction.guild.get_role(rid) for rid in role_ids if interaction.guild.get_role(rid) is not None]
+        
+        # Restore old roles
+        if roles_to_add:
+            try:
+                await member.add_roles(*roles_to_add, reason="Restoring roles after unquarantine")
+            except Exception as e:
+                return await interaction.response.send_message(f"⚠️ Roles restore e error hoyeche: {e}", ephemeral=True)
+
+        del saved_dict[mem_id_str]
+        config["quarantine_saved_roles"] = saved_dict
+        save_db(db)
+
+        await interaction.response.send_message(f"✅ {member.mention} successfully unquarantined ebong shob role fashot dewa hoyeche!", ephemeral=True)
+        await send_global_log(interaction.guild, "🔓 Member Unquarantined", f"{member.mention} was unquarantined and all roles restored by {interaction.user.mention}", color=discord.Color.green())
+    else:
+        await interaction.response.send_message(f"⚠️ {member.mention}-er purano saved role record paowa jayni. (Quarantine role topbuo remove kora hoyeche).", ephemeral=True)
 
 @bot.event
 async def on_guild_channel_delete(channel):
     config = get_server_config(channel.guild.id)
     if not config.get("antinuke", False):
         return
+
     async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
         user = entry.user
         if user.id == bot.user.id or user.id == channel.guild.owner_id or user.id in config.get("antinuke_whitelist", []):
             return
+
+        member = channel.guild.get_member(user.id)
+        if not member:
+            return
+
+        q_role_id = config.get("quarantine_role")
+        q_role = channel.guild.get_role(q_role_id) if q_role_id else None
+
+        # Collect user's assignable roles (excluding @everyone & unassignable)
+        user_roles = [r for r in member.roles if r != channel.guild.default_role and not r.managed]
+        user_role_ids = [r.id for r in user_roles]
+
+        # Save role IDs in DB
+        mem_id_str = str(member.id)
+        config["quarantine_saved_roles"][mem_id_str] = user_role_ids
+        save_db(db)
+
         try:
-            await channel.guild.ban(user, reason="Anti-Nuke Triggered: Mass Channel Deletion")
-            log_cid = config.get("mod_log_channel")
-            if log_cid:
-                log_chan = channel.guild.get_channel(log_cid)
-                if log_chan:
-                    await log_chan.send(f"🚨 **Anti-Nuke Action:** Banned {user.mention} for deleting channel `{channel.name}`.")
-        except:
-            pass
+            # Strip all roles
+            if user_roles:
+                await member.remove_roles(*user_roles, reason="Anti-Nuke Triggered: Stripping roles for punishment")
+            
+            # Assign Quarantine role if configured
+            if q_role:
+                await member.add_roles(q_role, reason="Anti-Nuke Triggered: Added Quarantine Role")
+            
+            await send_global_log(
+                channel.guild,
+                "🚨 Anti-Nuke Triggered (Quarantined)",
+                f"**User:** {member.mention}\n**Action:** Mass Channel Deletion (`{channel.name}`)\n**Punishment:** Removed all roles & added Quarantine role.",
+                color=discord.Color.red()
+            )
+        except Exception as e:
+            await send_global_log(
+                channel.guild,
+                "⚠️ Anti-Nuke Action Error",
+                f"Failed to punish {member.mention} on channel deletion: `{e}`",
+                color=discord.Color.gold()
+            )
 
 # ================= 👋 WELCOME SYSTEM =================
 
@@ -180,6 +302,7 @@ async def setwelcomechannel(interaction: discord.Interaction, channel: discord.T
     config["welcome_channel"] = channel.id
     save_db(db)
     await interaction.response.send_message(f"✅ Welcome channel set to {channel.mention}", ephemeral=True)
+    await send_global_log(interaction.guild, "👋 Welcome Config", f"Welcome channel updated to {channel.mention} by {interaction.user.mention}")
 
 @bot.tree.command(name="setwelcomemessage", description="Set welcome message (Use {member} and {server})")
 @commands.has_permissions(administrator=True)
@@ -282,7 +405,6 @@ async def on_message(message):
 
     config = get_server_config(message.guild.id)
     
-    # Fixed Bypass Role Check
     bypass_role_id = config.get("automod_role")
     is_bypassed = False
     if bypass_role_id and discord.utils.get(message.author.roles, id=bypass_role_id):
@@ -302,11 +424,12 @@ async def on_message(message):
             
             await message.channel.send(f"⚠️ {message.author.mention}, your message contained forbidden words/links and was removed!", delete_after=5)
             
-            log_cid = config.get("automod_log_channel")
-            if log_cid:
-                log_chan = message.guild.get_channel(log_cid)
-                if log_chan:
-                    await log_chan.send(f"🛡️ **Auto-Mod Triggered:** Deleted message by {message.author.mention} in {message.channel.mention}.\n**Content:** `{message.content}`")
+            await send_global_log(
+                message.guild,
+                "🛡️ Auto-Mod Triggered",
+                f"**User:** {message.author.mention}\n**Channel:** {message.channel.mention}\n**Content:** `{message.content}`",
+                color=discord.Color.orange()
+            )
             return
 
     await bot.process_commands(message)
@@ -323,13 +446,13 @@ async def help_command(interaction: discord.Interaction):
     
     embed.add_field(
         name="⚙️ Config & Setup",
-        value="`/setprefix` - Set custom prefix\n`/setwelcomechannel` - Set welcome channel\n`/setwelcomemessage` - Set custom welcome text\n`/togglewelcomedm` - Turn welcome DM ON/OFF",
+        value="`/setprefix` - Set custom prefix\n`/setlogchannel` - Set global log channel\n`/setquarantinerole` - Set quarantine role\n`/unquarantine` - Restore member roles\n`/setwelcomechannel` - Set welcome channel",
         inline=False
     )
     
     embed.add_field(
         name="🛡️ Moderation & Security",
-        value="`/warn` - Warn member & DM\n`/kick` - Kick member\n`/ban` - Ban member\n`/timeout` - Mute member\n`/clear` - Delete chats\n`/antinuke` - Toggle anti-nuke\n`/antinukewhitelist` - Manage nuke whitelist\n`/setmodlog` - Set mod log channel",
+        value="`/warn` - Warn member & DM\n`/kick` - Kick member\n`/ban` - Ban member\n`/timeout` - Mute member\n`/clear` - Delete chats\n`/antinuke` - Toggle anti-nuke\n`/antinukewhitelist` - Manage nuke whitelist",
         inline=False
     )
 
@@ -369,16 +492,7 @@ async def update_bot(ctx):
     except Exception as e:
         await msg.edit(content=f"❌ Update fail koreche: {e}")
 
-# ================= 🛡️ 1. MODERATION COMMANDS (WITH LOGS) =================
-
-async def log_mod_action(guild, action_title, description):
-    config = get_server_config(guild.id)
-    log_cid = config.get("mod_log_channel")
-    if log_cid:
-        log_chan = guild.get_channel(log_cid)
-        if log_chan:
-            embed = discord.Embed(title=action_title, description=description, color=discord.Color.dark_red(), timestamp=datetime.datetime.now())
-            await log_chan.send(embed=embed)
+# ================= 🛡️ MODERATION COMMANDS =================
 
 @bot.tree.command(name="warn", description="Warn a member and send them a DM")
 @commands.has_permissions(manage_messages=True)
@@ -400,21 +514,21 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
         color=discord.Color.orange()
     )
     await interaction.response.send_message(embed=embed)
-    await log_mod_action(interaction.guild, "⚠️ Member Warned", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}")
+    await send_global_log(interaction.guild, "⚠️ Member Warned", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}", color=discord.Color.orange())
 
 @bot.tree.command(name="kick", description="Kick a member from the server")
 @commands.has_permissions(kick_members=True)
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     await member.kick(reason=reason)
     await interaction.response.send_message(f"✅ {member.mention} has been kicked. Reason: {reason}")
-    await log_mod_action(interaction.guild, "👢 Member Kicked", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}")
+    await send_global_log(interaction.guild, "👢 Member Kicked", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}", color=discord.Color.red())
 
 @bot.tree.command(name="ban", description="Ban a member from the server")
 @commands.has_permissions(ban_members=True)
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     await member.ban(reason=reason)
     await interaction.response.send_message(f"⛔ {member.mention} has been banned. Reason: {reason}")
-    await log_mod_action(interaction.guild, "🔨 Member Banned", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}")
+    await send_global_log(interaction.guild, "🔨 Member Banned", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}", color=discord.Color.dark_red())
 
 @bot.tree.command(name="timeout", description="Timeout (mute) a member in minutes")
 @commands.has_permissions(moderate_members=True)
@@ -422,7 +536,7 @@ async def timeout(interaction: discord.Interaction, member: discord.Member, minu
     duration = datetime.timedelta(minutes=minutes)
     await member.timeout(duration, reason=reason)
     await interaction.response.send_message(f"🔇 {member.mention} has been muted for {minutes} minutes.")
-    await log_mod_action(interaction.guild, "🔇 Member Timeout", f"**User:** {member.mention}\n**Duration:** {minutes} minutes\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}")
+    await send_global_log(interaction.guild, "🔇 Member Timeout", f"**User:** {member.mention}\n**Duration:** {minutes} minutes\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}", color=discord.Color.gold())
 
 @bot.tree.command(name="clear", description="Clear a specified amount of messages")
 @commands.has_permissions(manage_messages=True)
@@ -430,9 +544,9 @@ async def clear(interaction: discord.Interaction, amount: int):
     await interaction.response.defer(ephemeral=True)
     deleted = await interaction.channel.purge(limit=amount)
     await interaction.followup.send(f"🧹 Deleted {len(deleted)} messages.", ephemeral=True)
-    await log_mod_action(interaction.guild, "🧹 Messages Cleared", f"**Channel:** {interaction.channel.mention}\n**Amount:** {len(deleted)}\n**Moderator:** {interaction.user.mention}")
+    await send_global_log(interaction.guild, "🧹 Messages Cleared", f"**Channel:** {interaction.channel.mention}\n**Amount:** {len(deleted)}\n**Moderator:** {interaction.user.mention}", color=discord.Color.blue())
 
-# ================= 🎮 2. MINI-GAMES & FUN COMMANDS =================
+# ================= 🎮 MINI-GAMES & FUN COMMANDS =================
 
 @bot.command(name="FLIP")
 async def flip_prefix(ctx):
@@ -470,7 +584,7 @@ async def eight_ball(interaction: discord.Interaction, question: str):
     answer = random.choice(responses)
     await interaction.response.send_message(f"❓ **Question:** {question}\n🎱 **8Ball:** {answer}")
 
-# ================= ⚙️ 3. UTILITY COMMANDS =================
+# ================= ⚙️ UTILITY COMMANDS =================
 
 @bot.tree.command(name="userinfo", description="Get details of a user")
 async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
