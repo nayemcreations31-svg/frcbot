@@ -7,6 +7,7 @@ import random
 import datetime
 import subprocess
 import sys
+import json
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -15,6 +16,48 @@ load_dotenv()
 # ================= CONFIGURATION =================
 TOKEN = os.getenv("DISCORD_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+
+# Database Files for Multi-Server Settings
+DB_FILE = "bot_settings.json"
+
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {}
+    try:
+        with open(DB_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_db(data):
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+db = load_db()
+
+def get_server_config(guild_id):
+    gid = str(guild_id)
+    if gid not in db:
+        db[gid] = {
+            "prefix": "!",
+            "antinuke": False,
+            "antinuke_whitelist": [],
+            "welcome_channel": None,
+            "welcome_msg": "Welcome {member} to {server}!",
+            "welcome_dm": True,
+            "automod_role": None,
+            "automod_whitelist": [],
+            "automod_log_channel": None,
+            "mod_log_channel": None
+        }
+        save_db(db)
+    return db[gid]
+
+def get_prefix(bot, message):
+    if not message.guild:
+        return "!"
+    config = get_server_config(message.guild.id)
+    return config.get("prefix", "!")
 
 # Auto-Mod Settings
 FORBIDDEN_WORDS = ["badword1", "badword2", "spamlink.com"]
@@ -52,7 +95,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
 @bot.event
 async def on_ready():
@@ -65,30 +108,213 @@ async def on_ready():
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
 
-# ================= ⚙️ AUTO-MOD & WELCOME EVENTS =================
+# ================= ⚙️ CONFIG & PREFIX COMMANDS =================
+
+@bot.tree.command(name="setprefix", description="Change bot prefix for this server")
+@commands.has_permissions(administrator=True)
+async def setprefix(interaction: discord.Interaction, prefix: str):
+    config = get_server_config(interaction.guild.id)
+    config["prefix"] = prefix
+    save_db(db)
+    await interaction.response.send_message(f"✅ Server prefix successfully updated to: `{prefix}`", ephemeral=True)
+
+# ================= 🛡️ ANTINUKE SYSTEM =================
+
+@bot.tree.command(name="antinuke", description="Enable or disable Antinuke feature")
+@commands.has_permissions(administrator=True)
+async def antinuke(interaction: discord.Interaction, status: bool):
+    config = get_server_config(interaction.guild.id)
+    config["antinuke"] = status
+    save_db(db)
+    state = "Enabled 🟢" if status else "Disabled 🔴"
+    await interaction.response.send_message(f"🛡️ Antinuke system is now {state}", ephemeral=True)
+
+@bot.tree.command(name="antinukewhitelist", description="Add or remove member from Antinuke whitelist")
+@commands.has_permissions(administrator=True)
+async def antinukewhitelist(interaction: discord.Interaction, action: str, member: discord.Member):
+    config = get_server_config(interaction.guild.id)
+    w_list = config["antinuke_whitelist"]
+    
+    if action.lower() == "add":
+        if member.id not in w_list:
+            w_list.append(member.id)
+            save_db(db)
+            await interaction.response.send_message(f"✅ {member.mention} added to Antinuke Whitelist.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ {member.mention} is already in the whitelist.", ephemeral=True)
+    elif action.lower() == "remove":
+        if member.id in w_list:
+            w_list.remove(member.id)
+            save_db(db)
+            await interaction.response.send_message(f"❌ {member.mention} removed from Antinuke Whitelist.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ {member.mention} is not in the whitelist.", ephemeral=True)
+    else:
+        await interaction.response.send_message("Please use action: `add` or `remove`.", ephemeral=True)
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    config = get_server_config(channel.guild.id)
+    if not config.get("antinuke", False):
+        return
+    # Basic Anti-Nuke logic for mass channel deletion protection
+    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
+        user = entry.user
+        if user.id == bot.user.id or user.id == channel.guild.owner_id or user.id in config.get("antinuke_whitelist", []):
+            return
+        try:
+            await channel.guild.ban(user, reason="Anti-Nuke Triggered: Mass Channel Deletion")
+            # Log to mod log if set
+            log_cid = config.get("mod_log_channel")
+            if log_cid:
+                log_chan = channel.guild.get_channel(log_cid)
+                if log_chan:
+                    await log_chan.send(f"🚨 **Anti-Nuke Action:** Banned {user.mention} for deleting channel `{channel.name}`.")
+        except:
+            pass
+
+# ================= 👋 WELCOME SYSTEM =================
+
+@bot.tree.command(name="setwelcomechannel", description="Set the welcome channel")
+@commands.has_permissions(administrator=True)
+async def setwelcomechannel(interaction: discord.Interaction, channel: discord.TextChannel):
+    config = get_server_config(interaction.guild.id)
+    config["welcome_channel"] = channel.id
+    save_db(db)
+    await interaction.response.send_message(f"✅ Welcome channel set to {channel.mention}", ephemeral=True)
+
+@bot.tree.command(name="setwelcomemessage", description="Set welcome message (Use {member} and {server})")
+@commands.has_permissions(administrator=True)
+async def setwelcomemessage(interaction: discord.Interaction, message: str):
+    config = get_server_config(interaction.guild.id)
+    config["welcome_msg"] = message
+    save_db(db)
+    await interaction.response.send_message(f"✅ Welcome message updated to:\n`{message}`", ephemeral=True)
+
+@bot.tree.command(name="togglewelcomedm", description="Toggle whether to send welcome message in DM")
+@commands.has_permissions(administrator=True)
+async def togglewelcomedm(interaction: discord.Interaction, status: bool):
+    config = get_server_config(interaction.guild.id)
+    config["welcome_dm"] = status
+    save_db(db)
+    await interaction.response.send_message(f"📬 Welcome DM status set to: {status}", ephemeral=True)
 
 @bot.event
 async def on_member_join(member):
-    channel = discord.utils.get(member.guild.text_channels, name="welcome") or member.guild.system_channel
-    if channel:
-        embed = discord.Embed(
-            title="👋 Welcome to the Server!",
-            description=f"Welcome {member.mention}! We are glad to have you here.",
-            color=discord.Color.green()
-        )
-        embed.set_thumbnail(url=member.display_avatar.url)
-        await channel.send(embed=embed)
+    config = get_server_config(member.guild.id)
+    raw_msg = config.get("welcome_msg", "Welcome {member} to {server}!")
+    formatted_msg = raw_msg.replace("{member}", member.mention).replace("{server}", member.guild.name)
+
+    # Send in Channel
+    channel_id = config.get("welcome_channel")
+    if channel_id:
+        channel = member.guild.get_channel(channel_id) or discord.utils.get(member.guild.text_channels, name="welcome")
+        if channel:
+            embed = discord.Embed(
+                title="👋 Welcome to the Server!",
+                description=formatted_msg,
+                color=discord.Color.green()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            await channel.send(embed=embed)
+
+    # Send in DM if enabled
+    if config.get("welcome_dm", True):
+        try:
+            dm_embed = discord.Embed(
+                title=f"Welcome to {member.guild.name}!",
+                description=formatted_msg,
+                color=discord.Color.green()
+            )
+            await member.send(embed=dm_embed)
+        except:
+            pass
+
+
+# ================= 🛡️ AUTO-MOD & LOGS =================
+
+@bot.tree.command(name="automodrole", description="Set a role to bypass Auto-Mod")
+@commands.has_permissions(administrator=True)
+async def automodrole(interaction: discord.Interaction, role: discord.Role):
+    config = get_server_config(interaction.guild.id)
+    config["automod_role"] = role.id
+    save_db(db)
+    await interaction.response.send_message(f"✅ Auto-Mod bypass role set to {role.mention}", ephemeral=True)
+
+@bot.tree.command(name="automodwhitelist", description="Add or remove user from Auto-Mod whitelist")
+@commands.has_permissions(administrator=True)
+async def automodwhitelist(interaction: discord.Interaction, action: str, member: discord.Member):
+    config = get_server_config(interaction.guild.id)
+    w_list = config["automod_whitelist"]
+    
+    if action.lower() == "add":
+        if member.id not in w_list:
+            w_list.append(member.id)
+            save_db(db)
+            await interaction.response.send_message(f"✅ {member.mention} added to Auto-Mod Whitelist.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ {member.mention} is already in Auto-Mod whitelist.", ephemeral=True)
+    elif action.lower() == "remove":
+        if member.id in w_list:
+            w_list.remove(member.id)
+            save_db(db)
+            await interaction.response.send_message(f"❌ {member.mention} removed from Auto-Mod Whitelist.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"⚠️ {member.mention} is not in Auto-Mod whitelist.", ephemeral=True)
+    else:
+        await interaction.response.send_message("Please use action: `add` or `remove`.", ephemeral=True)
+
+@bot.tree.command(name="setautomodlog", description="Set Auto-Mod log channel")
+@commands.has_permissions(administrator=True)
+async def setautomodlog(interaction: discord.Interaction, channel: discord.TextChannel):
+    config = get_server_config(interaction.guild.id)
+    config["automod_log_channel"] = channel.id
+    save_db(db)
+    await interaction.response.send_message(f"✅ Auto-Mod log channel set to {channel.mention}", ephemeral=True)
+
+@bot.tree.command(name="setmodlog", description="Set Moderation action log channel")
+@commands.has_permissions(administrator=True)
+async def setmodlog(interaction: discord.Interaction, channel: discord.TextChannel):
+    config = get_server_config(interaction.guild.id)
+    config["mod_log_channel"] = channel.id
+    save_db(db)
+    await interaction.response.send_message(f"✅ Moderation log channel set to {channel.mention}", ephemeral=True)
+
 
 @bot.event
 async def on_message(message):
-    if message.author.bot:
+    if message.author.bot or not message.guild:
         return
 
-    content = message.content.lower()
-    if any(word in content for word in FORBIDDEN_WORDS) or "discord.gg/" in content:
-        await message.delete()
-        await message.channel.send(f"⚠️ {message.author.mention}, your message contained forbidden words/links and was removed!", delete_after=5)
-        return
+    config = get_server_config(message.guild.id)
+    
+    # Check Bypass Role or Whitelist
+    bypass_role_id = config.get("automod_role")
+    is_bypassed = False
+    if bypass_role_id and message.author.get_role(bypass_role_id):
+        is_bypassed = True
+    if message.author.id in config.get("automod_whitelist", []):
+        is_bypassed = True
+    if message.author.guild_permissions.administrator:
+        is_bypassed = True
+
+    if not is_bypassed:
+        content = message.content.lower()
+        if any(word in content for word in FORBIDDEN_WORDS) or "discord.gg/" in content:
+            try:
+                await message.delete()
+            except:
+                pass
+            
+            await message.channel.send(f"⚠️ {message.author.mention}, your message contained forbidden words/links and was removed!", delete_after=5)
+            
+            # Send to Automod Log Channel
+            log_cid = config.get("automod_log_channel")
+            if log_cid:
+                log_chan = message.guild.get_channel(log_cid)
+                if log_chan:
+                    await log_chan.send(f"🛡️ **Auto-Mod Triggered:** Deleted message by {message.author.mention} in {message.channel.mention}.\n**Content:** `{message.content}`")
+            return
 
     await bot.process_commands(message)
 
@@ -104,8 +330,20 @@ async def help_command(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="🛡️ Moderation Commands",
-        value="`/warn` - Warn a member & send DM\n`/kick` - Kick a member\n`/ban` - Ban a member\n`/timeout` - Mute a member\n`/clear` - Delete messages",
+        name="⚙️ Config & Setup",
+        value="`/setprefix` - Set custom prefix\n`/setwelcomechannel` - Set welcome channel\n`/setwelcomemessage` - Set custom welcome text\n`/togglewelcomedm` - Turn welcome DM ON/OFF",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🛡️ Moderation & Security",
+        value="`/warn` - Warn member & DM\n`/kick` - Kick member\n`/ban` - Ban member\n`/timeout` - Mute member\n`/clear` - Delete chats\n`/antinuke` - Toggle anti-nuke\n`/antinukewhitelist` - Manage nuke whitelist\n`/setmodlog` - Set mod log channel",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🤖 Auto-Mod & Logs",
+        value="`/automodrole` - Set bypass role\n`/automodwhitelist` - Manage automod whitelist\n`/setautomodlog` - Set automod log channel",
         inline=False
     )
     
@@ -125,25 +363,32 @@ async def help_command(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# Auto-Update Command (Discord theke update korar jonno)
+# Auto-Update Command
 @bot.command(name="update")
 async def update_bot(ctx):
     msg = await ctx.send("🔄 GitHub theke latest code update kora hocche...")
     try:
-        # Git pull run korbe
         result = subprocess.run(["git", "pull"], capture_output=True, text=True)
         
         if "Already up to date." in result.stdout:
             await msg.edit(content="✅ Bot already latest version-e ache! Kono notun update nei.")
         else:
             await msg.edit(content="✅ Code successfully updated! Bot restart hochhe...")
-            # Bot ke automatic restart korbe
             os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:
         await msg.edit(content=f"❌ Update fail koreche: {e}")
 
 
-# ================= 🛡️ 1. MODERATION COMMANDS =================
+# ================= 🛡️ 1. MODERATION COMMANDS (WITH LOGS) =================
+
+async def log_mod_action(guild, action_title, description):
+    config = get_server_config(guild.id)
+    log_cid = config.get("mod_log_channel")
+    if log_cid:
+        log_chan = guild.get_channel(log_cid)
+        if log_chan:
+            embed = discord.Embed(title=action_title, description=description, color=discord.Color.dark_red(), timestamp=datetime.datetime.now())
+            await log_chan.send(embed=embed)
 
 @bot.tree.command(name="warn", description="Warn a member and send them a DM")
 @commands.has_permissions(manage_messages=True)
@@ -165,18 +410,21 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
         color=discord.Color.orange()
     )
     await interaction.response.send_message(embed=embed)
+    await log_mod_action(interaction.guild, "⚠️ Member Warned", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}")
 
 @bot.tree.command(name="kick", description="Kick a member from the server")
 @commands.has_permissions(kick_members=True)
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     await member.kick(reason=reason)
     await interaction.response.send_message(f"✅ {member.mention} has been kicked. Reason: {reason}")
+    await log_mod_action(interaction.guild, "👢 Member Kicked", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}")
 
 @bot.tree.command(name="ban", description="Ban a member from the server")
 @commands.has_permissions(ban_members=True)
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     await member.ban(reason=reason)
     await interaction.response.send_message(f"⛔ {member.mention} has been banned. Reason: {reason}")
+    await log_mod_action(interaction.guild, "🔨 Member Banned", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}")
 
 @bot.tree.command(name="timeout", description="Timeout (mute) a member in minutes")
 @commands.has_permissions(moderate_members=True)
@@ -184,6 +432,7 @@ async def timeout(interaction: discord.Interaction, member: discord.Member, minu
     duration = datetime.timedelta(minutes=minutes)
     await member.timeout(duration, reason=reason)
     await interaction.response.send_message(f"🔇 {member.mention} has been muted for {minutes} minutes.")
+    await log_mod_action(interaction.guild, "🔇 Member Timeout", f"**User:** {member.mention}\n**Duration:** {minutes} minutes\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}")
 
 @bot.tree.command(name="clear", description="Clear a specified amount of messages")
 @commands.has_permissions(manage_messages=True)
@@ -191,6 +440,7 @@ async def clear(interaction: discord.Interaction, amount: int):
     await interaction.response.defer(ephemeral=True)
     deleted = await interaction.channel.purge(limit=amount)
     await interaction.followup.send(f"🧹 Deleted {len(deleted)} messages.", ephemeral=True)
+    await log_mod_action(interaction.guild, "🧹 Messages Cleared", f"**Channel:** {interaction.channel.mention}\n**Amount:** {len(deleted)}\n**Moderator:** {interaction.user.mention}")
 
 
 # ================= 🎮 2. MINI-GAMES & FUN COMMANDS =================
@@ -226,7 +476,7 @@ async def rps(interaction: discord.Interaction, choice: str):
     await interaction.response.send_message(f"You chose **{user_choice}**, Bot chose **{bot_choice}**.\n**{res}**")
 
 @bot.tree.command(name="8ball", description="Ask the Magic 8Ball a question")
-async def eight_ball(interaction: discord.Instruction if "Instruction" in globals() else discord.Interaction, question: str):
+async def eight_ball(interaction: discord.Interaction, question: str):
     responses = ["Yes, definitely!", "It is certain.", "Ask again later.", "Cannot predict now.", "No, absolutely not.", "My sources say no."]
     answer = random.choice(responses)
     await interaction.response.send_message(f"❓ **Question:** {question}\n🎱 **8Ball:** {answer}")
@@ -235,12 +485,12 @@ async def eight_ball(interaction: discord.Instruction if "Instruction" in global
 # ================= ⚙️ 3. UTILITY COMMANDS =================
 
 @bot.tree.command(name="userinfo", description="Get details of a user")
-async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
+async def userinfo(interaction: discord.Interaction, member:discord.Member = None):
     target = member or interaction.user
     embed = discord.Embed(title=f"User Info - {target.name}", color=discord.Color.blue())
     embed.set_thumbnail(url=target.display_avatar.url)
     embed.add_field(name="User ID", value=target.id, inline=True)
-    embed.add_field(name="Joined Server", value=target.joined_at.strftime("%Y-%m-%d"), inline=True)
+    embed.add_field(name="Joined Server", value=target.joined_at.strftime("%Y-%m-%d") if target.joined_at else "N/A", inline=True)
     embed.add_field(name="Account Created", value=target.created_at.strftime("%Y-%m-%d"), inline=True)
     await interaction.response.send_message(embed=embed)
 
