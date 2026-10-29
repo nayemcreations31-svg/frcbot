@@ -157,14 +157,12 @@ async def on_guild_channel_delete(channel):
     config = get_server_config(channel.guild.id)
     if not config.get("antinuke", False):
         return
-    # Basic Anti-Nuke logic for mass channel deletion protection
     async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
         user = entry.user
         if user.id == bot.user.id or user.id == channel.guild.owner_id or user.id in config.get("antinuke_whitelist", []):
             return
         try:
             await channel.guild.ban(user, reason="Anti-Nuke Triggered: Mass Channel Deletion")
-            # Log to mod log if set
             log_cid = config.get("mod_log_channel")
             if log_cid:
                 log_chan = channel.guild.get_channel(log_cid)
@@ -205,7 +203,6 @@ async def on_member_join(member):
     raw_msg = config.get("welcome_msg", "Welcome {member} to {server}!")
     formatted_msg = raw_msg.replace("{member}", member.mention).replace("{server}", member.guild.name)
 
-    # Send in Channel
     channel_id = config.get("welcome_channel")
     if channel_id:
         channel = member.guild.get_channel(channel_id) or discord.utils.get(member.guild.text_channels, name="welcome")
@@ -218,7 +215,6 @@ async def on_member_join(member):
             embed.set_thumbnail(url=member.display_avatar.url)
             await channel.send(embed=embed)
 
-    # Send in DM if enabled
     if config.get("welcome_dm", True):
         try:
             dm_embed = discord.Embed(
@@ -229,7 +225,6 @@ async def on_member_join(member):
             await member.send(embed=dm_embed)
         except:
             pass
-
 
 # ================= 🛡️ AUTO-MOD & LOGS =================
 
@@ -280,7 +275,6 @@ async def setmodlog(interaction: discord.Interaction, channel: discord.TextChann
     save_db(db)
     await interaction.response.send_message(f"✅ Moderation log channel set to {channel.mention}", ephemeral=True)
 
-
 @bot.event
 async def on_message(message):
     if message.author.bot or not message.guild:
@@ -288,10 +282,10 @@ async def on_message(message):
 
     config = get_server_config(message.guild.id)
     
-    # Check Bypass Role or Whitelist
+    # Fixed Bypass Role Check
     bypass_role_id = config.get("automod_role")
     is_bypassed = False
-    if bypass_role_id and message.author.get_role(bypass_role_id):
+    if bypass_role_id and discord.utils.get(message.author.roles, id=bypass_role_id):
         is_bypassed = True
     if message.author.id in config.get("automod_whitelist", []):
         is_bypassed = True
@@ -308,7 +302,6 @@ async def on_message(message):
             
             await message.channel.send(f"⚠️ {message.author.mention}, your message contained forbidden words/links and was removed!", delete_after=5)
             
-            # Send to Automod Log Channel
             log_cid = config.get("automod_log_channel")
             if log_cid:
                 log_chan = message.guild.get_channel(log_cid)
@@ -317,7 +310,6 @@ async def on_message(message):
             return
 
     await bot.process_commands(message)
-
 
 # ================= 🤖 HELP & UPDATE COMMANDS =================
 
@@ -362,7 +354,6 @@ async def help_command(interaction: discord.Interaction):
     embed.set_footer(text="Developed by ACID | Binance UID: 1016468667")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
 # Auto-Update Command
 @bot.command(name="update")
 async def update_bot(ctx):
@@ -377,7 +368,6 @@ async def update_bot(ctx):
             os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:
         await msg.edit(content=f"❌ Update fail koreche: {e}")
-
 
 # ================= 🛡️ 1. MODERATION COMMANDS (WITH LOGS) =================
 
@@ -442,7 +432,6 @@ async def clear(interaction: discord.Interaction, amount: int):
     await interaction.followup.send(f"🧹 Deleted {len(deleted)} messages.", ephemeral=True)
     await log_mod_action(interaction.guild, "🧹 Messages Cleared", f"**Channel:** {interaction.channel.mention}\n**Amount:** {len(deleted)}\n**Moderator:** {interaction.user.mention}")
 
-
 # ================= 🎮 2. MINI-GAMES & FUN COMMANDS =================
 
 @bot.command(name="FLIP")
@@ -481,11 +470,10 @@ async def eight_ball(interaction: discord.Interaction, question: str):
     answer = random.choice(responses)
     await interaction.response.send_message(f"❓ **Question:** {question}\n🎱 **8Ball:** {answer}")
 
-
 # ================= ⚙️ 3. UTILITY COMMANDS =================
 
 @bot.tree.command(name="userinfo", description="Get details of a user")
-async def userinfo(interaction: discord.Interaction, member:discord.Member = None):
+async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
     target = member or interaction.user
     embed = discord.Embed(title=f"User Info - {target.name}", color=discord.Color.blue())
     embed.set_thumbnail(url=target.display_avatar.url)
