@@ -1,5 +1,6 @@
 import os
 import discord
+from discord import app_commands
 from discord.ext import commands
 import platform
 import requests
@@ -165,7 +166,8 @@ async def trigger_antinuke_punishment(guild, user_id, action_name):
 # ================= ⚙️ ADMIN CONFIG & LOG COMMANDS =================
 
 @bot.tree.command(name="setprefix", description="Change bot prefix for this server")
-@commands.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def setprefix(interaction: discord.Interaction, prefix: str):
     config = get_server_config(interaction.guild.id)
     config["prefix"] = prefix
@@ -173,7 +175,8 @@ async def setprefix(interaction: discord.Interaction, prefix: str):
     await interaction.response.send_message(f"✅ Prefix updated to: `{prefix}`", ephemeral=True)
 
 @bot.tree.command(name="setmodlog", description="Set Moderation action log channel")
-@commands.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def setmodlog(interaction: discord.Interaction, channel: discord.TextChannel):
     config = get_server_config(interaction.guild.id)
     config["mod_log_channel"] = channel.id
@@ -181,7 +184,8 @@ async def setmodlog(interaction: discord.Interaction, channel: discord.TextChann
     await interaction.response.send_message(f"✅ Moderation log channel set to {channel.mention}", ephemeral=True)
 
 @bot.tree.command(name="setantinukelog", description="Set Anti-Nuke system action log channel")
-@commands.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def setantinukelog(interaction: discord.Interaction, channel: discord.TextChannel):
     config = get_server_config(interaction.guild.id)
     config["antinuke_log_channel"] = channel.id
@@ -189,7 +193,8 @@ async def setantinukelog(interaction: discord.Interaction, channel: discord.Text
     await interaction.response.send_message(f"✅ Anti-Nuke log channel set to {channel.mention}", ephemeral=True)
 
 @bot.tree.command(name="setquarantinerole", description="Set Quarantine role for Anti-Nuke")
-@commands.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def setquarantinerole(interaction: discord.Interaction, role: discord.Role):
     config = get_server_config(interaction.guild.id)
     config["quarantine_role"] = role.id
@@ -199,7 +204,8 @@ async def setquarantinerole(interaction: discord.Interaction, role: discord.Role
 # ================= 🛡️ ANTINUKE & QUARANTINE SYSTEM =================
 
 @bot.tree.command(name="antinuke", description="Enable or disable Antinuke feature")
-@commands.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def antinuke(interaction: discord.Interaction, status: bool):
     config = get_server_config(interaction.guild.id)
     config["antinuke"] = status
@@ -209,7 +215,8 @@ async def antinuke(interaction: discord.Interaction, status: bool):
     await send_log(interaction.guild, "antinuke_log_channel", "🛡️ Anti-Nuke Status", f"Anti-Nuke was **{state}** by {interaction.user.mention}", color=discord.Color.orange())
 
 @bot.tree.command(name="antinukewhitelist", description="Add or remove member from Antinuke whitelist")
-@commands.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def antinukewhitelist(interaction: discord.Interaction, action: str, member: discord.Member):
     config = get_server_config(interaction.guild.id)
     w_list = config["antinuke_whitelist"]
@@ -232,7 +239,8 @@ async def antinukewhitelist(interaction: discord.Interaction, action: str, membe
             await interaction.response.send_message(f"⚠️ Not in whitelist.", ephemeral=True)
 
 @bot.tree.command(name="unquarantine", description="Restore all roles to a quarantined member")
-@commands.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def unquarantine(interaction: discord.Interaction, member: discord.Member):
     config = get_server_config(interaction.guild.id)
     saved_dict = config.get("quarantine_saved_roles", {})
@@ -302,7 +310,8 @@ async def on_member_update(before, after):
 # ================= 👋 WELCOME SYSTEM =================
 
 @bot.tree.command(name="setwelcomechannel", description="Set welcome channel")
-@commands.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def setwelcomechannel(interaction: discord.Interaction, channel: discord.TextChannel):
     config = get_server_config(interaction.guild.id)
     config["welcome_channel"] = channel.id
@@ -310,7 +319,8 @@ async def setwelcomechannel(interaction: discord.Interaction, channel: discord.T
     await interaction.response.send_message(f"✅ Welcome channel set to {channel.mention}", ephemeral=True)
 
 @bot.tree.command(name="setwelcomemessage", description="Set custom welcome text")
-@commands.has_permissions(administrator=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def setwelcomemessage(interaction: discord.Interaction, message: str):
     config = get_server_config(interaction.guild.id)
     config["welcome_msg"] = message
@@ -362,6 +372,8 @@ async def on_message(message):
 # ================= 🤖 HELP & UPDATE COMMANDS =================
 
 @bot.tree.command(name="help", description="Show all commands")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(title="🤖 Bot Commands", description="Available features:", color=discord.Color.purple())
     embed.add_field(name="⚙️ Setup & Logs", value="`/setprefix` `/setmodlog` `/setantinukelog` `/setquarantinerole` `/setwelcomechannel` `/setwelcomemessage`", inline=False)
@@ -372,6 +384,7 @@ async def help_command(interaction: discord.Interaction):
 
 # Auto-Update Command
 @bot.command(name="update")
+@commands.has_permissions(administrator=True)
 async def update_bot(ctx):
     msg = await ctx.send("🔄 Updating code from GitHub...")
     try:
@@ -387,7 +400,8 @@ async def update_bot(ctx):
 # ================= 🛡️ MODERATION COMMANDS =================
 
 @bot.tree.command(name="warn", description="Warn a member")
-@commands.has_permissions(manage_messages=True)
+@app_commands.default_permissions(manage_messages=True)
+@app_commands.checks.has_permissions(manage_messages=True)
 async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
     try:
         await member.send(embed=discord.Embed(title="⚠️ Warning Received", description=f"Server: {interaction.guild.name}\nReason: {reason}", color=discord.Color.red()))
@@ -397,28 +411,32 @@ async def warn(interaction: discord.Interaction, member: discord.Member, reason:
     await send_log(interaction.guild, "mod_log_channel", "⚠️ Member Warned", f"**User:** {member.mention}\n**Moderator:** {interaction.user.mention}\n**Reason:** {reason}", color=discord.Color.orange())
 
 @bot.tree.command(name="kick", description="Kick a member")
-@commands.has_permissions(kick_members=True)
+@app_commands.default_permissions(kick_members=True)
+@app_commands.checks.has_permissions(kick_members=True)
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
     await member.kick(reason=reason)
     await interaction.response.send_message(f"✅ {member.mention} kicked.")
     await send_log(interaction.guild, "mod_log_channel", "👢 Member Kicked", f"**User:** {member.mention}\n**Mod:** {interaction.user.mention}\n**Reason:** {reason}", color=discord.Color.red())
 
 @bot.tree.command(name="ban", description="Ban a member")
-@commands.has_permissions(ban_members=True)
+@app_commands.default_permissions(ban_members=True)
+@app_commands.checks.has_permissions(ban_members=True)
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
     await member.ban(reason=reason)
     await interaction.response.send_message(f"⛔ {member.mention} banned.")
     await send_log(interaction.guild, "mod_log_channel", "🔨 Member Banned", f"**User:** {member.mention}\n**Mod:** {interaction.user.mention}\n**Reason:** {reason}", color=discord.Color.dark_red())
 
 @bot.tree.command(name="timeout", description="Timeout a member")
-@commands.has_permissions(moderate_members=True)
+@app_commands.default_permissions(moderate_members=True)
+@app_commands.checks.has_permissions(moderate_members=True)
 async def timeout(interaction: discord.Interaction, member: discord.Member, minutes: int, reason: str = "No reason"):
     await member.timeout(datetime.timedelta(minutes=minutes), reason=reason)
     await interaction.response.send_message(f"🔇 {member.mention} muted for {minutes}m.")
     await send_log(interaction.guild, "mod_log_channel", "🔇 Member Timeout", f"**User:** {member.mention}\n**Duration:** {minutes}m\n**Mod:** {interaction.user.mention}", color=discord.Color.gold())
 
 @bot.tree.command(name="clear", description="Clear messages")
-@commands.has_permissions(manage_messages=True)
+@app_commands.default_permissions(manage_messages=True)
+@app_commands.checks.has_permissions(manage_messages=True)
 async def clear(interaction: discord.Interaction, amount: int):
     await interaction.response.defer(ephemeral=True)
     deleted = await interaction.channel.purge(limit=amount)
@@ -450,6 +468,8 @@ async def eight_ball(interaction: discord.Interaction, question: str):
     await interaction.response.send_message(f"❓ **Q:** {question}\n🎱 **8Ball:** {ans}")
 
 @bot.tree.command(name="userinfo", description="Get user details")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
     t = member or interaction.user
     e = discord.Embed(title=f"User Info - {t.name}", color=discord.Color.blue())
@@ -459,6 +479,8 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
     await interaction.response.send_message(embed=e)
 
 @bot.tree.command(name="embed", description="Send custom embed")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def custom_embed(interaction: discord.Interaction, title: str, description: str):
     await interaction.channel.send(embed=discord.Embed(title=title, description=description, color=discord.Color.gold()))
     await interaction.response.send_message("Embed Sent!", ephemeral=True)
