@@ -99,6 +99,7 @@ def send_startup_info():
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.moderation = True
 
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
@@ -123,6 +124,43 @@ async def on_ready():
         print(f"Synced {len(synced)} slash commands.")
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
+
+# Helper function to punish nuke/unauthorized actions
+async def trigger_antinuke_punishment(guild, user_id, action_name):
+    config = get_server_config(guild.id)
+    if not config.get("antinuke", False):
+        return False
+
+    if user_id == bot.user.id or user_id == guild.owner_id or user_id in config.get("antinuke_whitelist", []):
+        return False
+
+    member = guild.get_member(user_id)
+    if not member:
+        return False
+
+    q_role_id = config.get("quarantine_role")
+    q_role = guild.get_role(q_role_id) if q_role_id else None
+
+    user_roles = [r for r in member.roles if r != guild.default_role and not r.managed]
+    config["quarantine_saved_roles"][str(member.id)] = [r.id for r in user_roles]
+    save_db(db)
+
+    try:
+        if user_roles:
+            await member.remove_roles(*user_roles, reason="Anti-Nuke Triggered")
+        if q_role:
+            await member.add_roles(q_role, reason="Anti-Nuke Quarantine")
+        
+        await send_log(
+            guild, 
+            "antinuke_log_channel", 
+            "🚨 Anti-Nuke Triggered", 
+            f"**User:** {member.mention}\n**Action:** {action_name}\n**Punishment:** Stripped roles & Quarantined.", 
+            color=discord.Color.red()
+        )
+        return True
+    except:
+        return False
 
 # ================= ⚙️ ADMIN CONFIG & LOG COMMANDS =================
 
@@ -224,36 +262,42 @@ async def unquarantine(interaction: discord.Interaction, member: discord.Member)
     else:
         await interaction.response.send_message(f"⚠️ No saved role record found.", ephemeral=True)
 
+# --- Anti-Nuke Event Listeners (Channel, Role, Ban, Kick, Admin Perms) ---
+
 @bot.event
 async def on_guild_channel_delete(channel):
-    config = get_server_config(channel.guild.id)
-    if not config.get("antinuke", False):
-        return
-
     async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
-        user = entry.user
-        if user.id == bot.user.id or user.id == channel.guild.owner_id or user.id in config.get("antinuke_whitelist", []):
-            return
+        await trigger_antinuke_punishment(channel.guild, entry.user.id, f"Deleted Channel (`{channel.name}`)")
+        break
 
-        member = channel.guild.get_member(user.id)
-        if not member:
-            return
+@bot.event
+async def on_guild_role_delete(role):
+    async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_delete):
+        await trigger_antinuke_punishment(role.guild, entry.user.id, f"Deleted Role (`{role.name}`)")
+        break
 
-        q_role_id = config.get("quarantine_role")
-        q_role = channel.guild.get_role(q_role_id) if q_role_id else None
+@bot.event
+async def on_member_ban(guild, user):
+    async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
+        await trigger_antinuke_punishment(guild, entry.user.id, f"Banned Member (`{user}`)")
+        break
 
-        user_roles = [r for r in member.roles if r != channel.guild.default_role and not r.managed]
-        config["quarantine_saved_roles"][str(member.id)] = [r.id for r in user_roles]
-        save_db(db)
+@bot.event
+async def on_member_remove(member):
+    guild = member.guild
+    async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.kick):
+        if entry.target.id == member.id:
+            await trigger_antinuke_punishment(guild, entry.user.id, f"Kicked Member (`{member}`)")
+            break
 
-        try:
-            if user_roles:
-                await member.remove_roles(*user_roles, reason="Anti-Nuke Triggered")
-            if q_role:
-                await member.add_roles(q_role, reason="Anti-Nuke Quarantine")
-            await send_log(channel.guild, "antinuke_log_channel", "🚨 Anti-Nuke Triggered", f"**User:** {member.mention}\n**Action:** Deleted `{channel.name}`\n**Punishment:** Quarantined.", color=discord.Color.red())
-        except:
-            pass
+@bot.event
+async def on_member_update(before, after):
+    if not before.guild_permissions.administrator and after.guild_permissions.administrator:
+        guild = after.guild
+        async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.member_role_update):
+            if entry.target.id == after.id:
+                await trigger_antinuke_punishment(guild, entry.user.id, f"Assigned Administrator Permission to {after.mention}")
+                break
 
 # ================= 👋 WELCOME SYSTEM =================
 
@@ -321,7 +365,7 @@ async def on_message(message):
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(title="🤖 Bot Commands", description="Available features:", color=discord.Color.purple())
     embed.add_field(name="⚙️ Setup & Logs", value="`/setprefix` `/setmodlog` `/setantinukelog` `/setquarantinerole` `/setwelcomechannel` `/setwelcomemessage`", inline=False)
-    embed.add_field(name="🛡️ Moderation", value="`/warn` `/kick` `/ban` `/timeout` `/clear` `/antinuke` `/antinukewhitelist` `/unquarantine`", inline=False)
+    embed.add_field(name="🛡️ Moderation & Anti-Nuke", value="`/warn` `/kick` `/ban` `/timeout` `/clear` `/antinuke` `/antinukewhitelist` `/unquarantine`", inline=False)
     embed.add_field(name="🎮 Fun & Utility", value="`!FLIP` `!ROLL` `/rps` `/8ball` `/userinfo` `/embed` `!update`", inline=False)
     embed.set_footer(text="Developed by ACID | Binance UID: 1016468667")
     await interaction.response.send_message(embed=embed, ephemeral=True)
