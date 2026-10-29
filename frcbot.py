@@ -103,7 +103,6 @@ intents.members = True
 bot = commands.Bot(command_prefix=get_prefix, intents=intents)
 
 async def send_log(guild, log_type, title, description, color=discord.Color.blue()):
-    """Helper function to send logs to specific channel (mod_log or antinuke_log)"""
     config = get_server_config(guild.id)
     log_cid = config.get(log_type)
     if log_cid:
@@ -322,7 +321,7 @@ async def on_message(message):
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(title="🤖 Bot Commands", description="Available features:", color=discord.Color.purple())
     embed.add_field(name="⚙️ Setup & Logs", value="`/setprefix` `/setmodlog` `/setantinukelog` `/setquarantinerole` `/setwelcomechannel` `/setwelcomemessage`", inline=False)
-    embed.add_field(name="🛡️ Moderation", value="`/warn` `/kick` `/ban` `/timeout` `/clear` `/antinuke` `/unquarantine`", inline=False)
+    embed.add_field(name="🛡️ Moderation", value="`/warn` `/kick` `/ban` `/timeout` `/clear` `/antinuke` `/antinukewhitelist` `/unquarantine`", inline=False)
     embed.add_field(name="🎮 Fun & Utility", value="`!FLIP` `!ROLL` `/rps` `/8ball` `/userinfo` `/embed` `!update`", inline=False)
     embed.set_footer(text="Developed by ACID | Binance UID: 1016468667")
     await interaction.response.send_message(embed=embed, ephemeral=True)
