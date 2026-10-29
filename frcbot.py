@@ -55,7 +55,6 @@ def get_server_config(guild_id):
         }
         save_db(db)
     
-    # Ensure new keys exist for old database entries
     config = db[gid]
     if "global_log_channel" not in config:
         config["global_log_channel"] = None
@@ -80,7 +79,7 @@ FORBIDDEN_WORDS = ["badword1", "badword2", "spamlink.com"]
 # Terminal Startup Banner
 print("=" * 45)
 print("THIS BOT DEVELOPED BY ACID")
-print("BUY ME COFFEE binance uid = 1016468667")
+print("BUY ME COFFEE binence uid = 1016468667")
 print("=" * 45)
 
 def send_startup_info():
@@ -216,7 +215,6 @@ async def unquarantine(interaction: discord.Interaction, member: discord.Member)
     q_role_id = config.get("quarantine_role")
     q_role = interaction.guild.get_role(q_role_id) if q_role_id else None
 
-    # Remove Quarantine Role if present
     if q_role and q_role in member.roles:
         try:
             await member.remove_roles(q_role, reason="Unquarantined by Admin")
@@ -227,7 +225,6 @@ async def unquarantine(interaction: discord.Interaction, member: discord.Member)
         role_ids = saved_dict[mem_id_str]
         roles_to_add = [interaction.guild.get_role(rid) for rid in role_ids if interaction.guild.get_role(rid) is not None]
         
-        # Restore old roles
         if roles_to_add:
             try:
                 await member.add_roles(*roles_to_add, reason="Restoring roles after unquarantine")
@@ -241,7 +238,7 @@ async def unquarantine(interaction: discord.Interaction, member: discord.Member)
         await interaction.response.send_message(f"✅ {member.mention} successfully unquarantined ebong shob role fashot dewa hoyeche!", ephemeral=True)
         await send_global_log(interaction.guild, "🔓 Member Unquarantined", f"{member.mention} was unquarantined and all roles restored by {interaction.user.mention}", color=discord.Color.green())
     else:
-        await interaction.response.send_message(f"⚠️ {member.mention}-er purano saved role record paowa jayni. (Quarantine role topbuo remove kora hoyeche).", ephemeral=True)
+        await interaction.response.send_message(f"⚠️ {member.mention}-er purano saved role record paowa jayni.", ephemeral=True)
 
 @bot.event
 async def on_guild_channel_delete(channel):
@@ -261,21 +258,17 @@ async def on_guild_channel_delete(channel):
         q_role_id = config.get("quarantine_role")
         q_role = channel.guild.get_role(q_role_id) if q_role_id else None
 
-        # Collect user's assignable roles (excluding @everyone & unassignable)
         user_roles = [r for r in member.roles if r != channel.guild.default_role and not r.managed]
         user_role_ids = [r.id for r in user_roles]
 
-        # Save role IDs in DB
         mem_id_str = str(member.id)
         config["quarantine_saved_roles"][mem_id_str] = user_role_ids
         save_db(db)
 
         try:
-            # Strip all roles
             if user_roles:
                 await member.remove_roles(*user_roles, reason="Anti-Nuke Triggered: Stripping roles for punishment")
             
-            # Assign Quarantine role if configured
             if q_role:
                 await member.add_roles(q_role, reason="Anti-Nuke Triggered: Added Quarantine Role")
             
