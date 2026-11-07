@@ -9,6 +9,7 @@ import datetime
 import subprocess
 import sys
 import json
+import unicodedata
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -51,7 +52,9 @@ def get_server_config(guild_id):
             "mod_log_channel": None,
             "antinuke_log_channel": None,
             "quarantine_role": None,
-            "quarantine_saved_roles": {}
+            "quarantine_saved_roles": {},
+            "nickname_channel": None,
+            "nickname_sticky_message": None
         }
         save_db(db)
     
@@ -61,7 +64,8 @@ def get_server_config(guild_id):
         "welcome_channel": None, "welcome_msg": "Welcome {member} to {server}!",
         "welcome_dm": True, "automod_role": None, "automod_whitelist": [],
         "automod_log_channel": None, "mod_log_channel": None,
-        "antinuke_log_channel": None, "quarantine_role": None, "quarantine_saved_roles": {}
+        "antinuke_log_channel": None, "quarantine_role": None, "quarantine_saved_roles": {},
+        "nickname_channel": None, "nickname_sticky_message": None
     }
     updated = False
     for k, v in defaults.items():
@@ -78,6 +82,103 @@ def get_prefix(bot, message):
     return get_server_config(message.guild.id).get("prefix", "!")
 
 FORBIDDEN_WORDS = ["badword1", "badword2", "spamlink.com"]
+NICKNAME_CHANNEL_INSTRUCTIONS = (
+    "Send a nickname to change your server nickname.\n"
+    "Use Reset to reset your nickname.\n"
+    "Use normal text only. Do not use offensive or inappropriate names.\n"
+    "Do not start your name with symbols. Emojis are allowed only at the end."
+)
+
+
+def is_emoji_character(character):
+    codepoint = ord(character)
+    return (
+        0x1F000 <= codepoint <= 0x1FAFF
+        or 0x2600 <= codepoint <= 0x27BF
+        or 0x2300 <= codepoint <= 0x23FF
+        or codepoint in {0x00A9, 0x00AE, 0x203C, 0x2049, 0x2122, 0x2139, 0x3030, 0x303D, 0x3297, 0x3299}
+        or codepoint in {0xFE0E, 0xFE0F, 0x200D, 0x20E3}
+    )
+
+
+def validate_nickname(nickname):
+    nickname = nickname.strip()
+    if not nickname:
+        return "Send a nickname, or use Reset to clear it."
+    if len(nickname) > 32:
+        return "Nicknames must be 32 characters or fewer."
+    if unicodedata.normalize("NFKC", nickname) != nickname:
+        return "Use normal text, not stylized or fancy-font characters."
+    if not nickname[0].isalnum():
+        return "A nickname must start with a letter or number, not a symbol."
+
+    emoji_started = False
+    has_emoji = False
+    for character in nickname:
+        if character in "\r\n\t":
+            return "Use one line of normal text."
+        if is_emoji_character(character):
+            emoji_started = True
+            has_emoji = True
+            continue
+        if emoji_started and character.isspace():
+            continue
+        if emoji_started:
+            return "Emojis are allowed only at the end of a nickname."
+        if character.isalnum() or character.isspace() or character in "'-._":
+            continue
+        return "Use normal text only; symbols and formatting are not allowed."
+
+    if has_emoji and not any(is_emoji_character(character) for character in nickname[-1:]):
+        return "Emojis are allowed only at the end of a nickname."
+    if any(word.casefold() in nickname.casefold() for word in FORBIDDEN_WORDS):
+        return "That nickname contains a blocked word or link."
+    return None
+
+
+async def refresh_nickname_sticky(channel, config):
+    sticky_id = config.get("nickname_sticky_message")
+    if sticky_id:
+        try:
+            sticky = await channel.fetch_message(sticky_id)
+        except discord.NotFound:
+            sticky = None
+        if sticky:
+            await sticky.delete()
+
+    sticky = await channel.send(NICKNAME_CHANNEL_INSTRUCTIONS)
+    config["nickname_sticky_message"] = sticky.id
+    save_db(db)
+
+
+async def update_nickname_from_message(message):
+    nickname = message.content.strip()
+    new_nickname = None if nickname.casefold() == "reset" else nickname
+    if new_nickname is not None:
+        error = validate_nickname(new_nickname)
+        if error:
+            await message.reply(error, delete_after=8, mention_author=False)
+            return
+
+    try:
+        await message.author.edit(nick=new_nickname, reason="Nickname set in the nickname channel")
+    except discord.Forbidden:
+        await message.reply(
+            "I could not change your nickname. Check my Manage Nicknames permission and role position.",
+            delete_after=10,
+            mention_author=False
+        )
+        return
+    except discord.HTTPException:
+        await message.reply("Discord could not update your nickname. Please try again.", delete_after=10, mention_author=False)
+        return
+
+    try:
+        await message.add_reaction("✅")
+    except discord.Forbidden:
+        await message.reply("Your nickname was changed, but I cannot add the confirmation reaction.", delete_after=10, mention_author=False)
+    except discord.HTTPException:
+        await message.reply("Your nickname was changed, but Discord could not add the confirmation reaction.", delete_after=10, mention_author=False)
 
 # Terminal Startup Banner
 print("=" * 45)
@@ -327,6 +428,67 @@ async def setwelcomemessage(interaction: discord.Interaction, message: str):
     save_db(db)
     await interaction.response.send_message(f"✅ Welcome message updated!", ephemeral=True)
 
+@bot.tree.command(name="setnicknamechannel", description="Set the channel where members can change their nickname")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+async def setnicknamechannel(interaction: discord.Interaction, channel: discord.TextChannel):
+    bot_member = interaction.guild.me
+    permissions = channel.permissions_for(bot_member)
+    if (
+        not permissions.send_messages
+        or not permissions.read_message_history
+        or not permissions.add_reactions
+        or not permissions.manage_nicknames
+    ):
+        await interaction.response.send_message(
+            "I need Send Messages, Read Message History, Add Reactions, and Manage Nicknames permissions in that channel/server.",
+            ephemeral=True
+        )
+        return
+
+    config = get_server_config(interaction.guild.id)
+    previous_channel_id = config.get("nickname_channel")
+    previous_sticky_id = config.get("nickname_sticky_message")
+    previous_channel = interaction.guild.get_channel(previous_channel_id) if previous_channel_id else None
+    if previous_channel and previous_sticky_id:
+        try:
+            previous_sticky = await previous_channel.fetch_message(previous_sticky_id)
+            await previous_sticky.delete()
+        except discord.NotFound:
+            pass
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "I could not remove the old sticky message. Check my permissions in the previous channel.",
+                ephemeral=True
+            )
+            return
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "Discord could not remove the old sticky message. Please try again.",
+                ephemeral=True
+            )
+            return
+
+    config["nickname_channel"] = channel.id
+    config["nickname_sticky_message"] = None
+    save_db(db)
+    try:
+        await refresh_nickname_sticky(channel, config)
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "The channel was saved, but I could not post the sticky instructions. Check my channel permissions.",
+            ephemeral=True
+        )
+        return
+    except discord.HTTPException:
+        await interaction.response.send_message(
+            "The channel was saved, but Discord could not post the sticky instructions. Please try again.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(f"✅ Nickname channel set to {channel.mention}", ephemeral=True)
+
 @bot.event
 async def on_member_join(member):
     config = get_server_config(member.guild.id)
@@ -365,7 +527,20 @@ async def on_message(message):
                 pass
             await message.channel.send(f"⚠️ {message.author.mention}, message removed due to forbidden words/links!", delete_after=5)
             await send_log(message.guild, "mod_log_channel", "🛡️ Auto-Mod Triggered", f"**User:** {message.author.mention}\n**Content:** `{message.content}`", color=discord.Color.orange())
+            if message.channel.id == config.get("nickname_channel"):
+                try:
+                    await refresh_nickname_sticky(message.channel, config)
+                except discord.HTTPException as error:
+                    print(f"Failed to refresh nickname instructions in channel {message.channel.id}: {error}")
             return
+
+    if message.channel.id == config.get("nickname_channel"):
+        await update_nickname_from_message(message)
+        try:
+            await refresh_nickname_sticky(message.channel, config)
+        except discord.HTTPException as error:
+            print(f"Failed to refresh nickname instructions in channel {message.channel.id}: {error}")
+        return
 
     await bot.process_commands(message)
 
@@ -376,7 +551,7 @@ async def on_message(message):
 @app_commands.checks.has_permissions(administrator=True)
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(title="🤖 Bot Commands", description="Available features:", color=discord.Color.purple())
-    embed.add_field(name="⚙️ Setup & Logs", value="`/setprefix` `/setmodlog` `/setantinukelog` `/setquarantinerole` `/setwelcomechannel` `/setwelcomemessage`", inline=False)
+    embed.add_field(name="⚙️ Setup & Logs", value="`/setprefix` `/setmodlog` `/setantinukelog` `/setquarantinerole` `/setwelcomechannel` `/setwelcomemessage` `/setnicknamechannel`", inline=False)
     embed.add_field(name="🛡️ Moderation & Anti-Nuke", value="`/warn` `/kick` `/ban` `/timeout` `/clear` `/antinuke` `/antinukewhitelist` `/unquarantine`", inline=False)
     embed.add_field(name="🎮 Fun & Utility", value="`!FLIP` `!ROLL` `/rps` `/8ball` `/userinfo` `/embed` `!update`", inline=False)
     embed.set_footer(text="Developed by ACID | Binance UID: 1016468667")
