@@ -83,6 +83,7 @@ def get_prefix(bot, message):
 
 FORBIDDEN_WORDS = ["badword1", "badword2", "spamlink.com"]
 NICKNAME_CHANNEL_INSTRUCTIONS = (
+    ":scroll: Nickname Rules"
     "*Send a nickname to change your server nickname.\n"
     "*Use Reset to reset your nickname.\n"
     "*Use normal text only. Do not use offensive or inappropriate names.\n"
