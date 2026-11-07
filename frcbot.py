@@ -556,7 +556,7 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="⚙️ Setup & Logs", value="`/setprefix` `/setmodlog` `/setantinukelog` `/setquarantinerole` `/setwelcomechannel` `/setwelcomemessage` `/setnicknamechannel`", inline=False)
     embed.add_field(name="🛡️ Moderation & Anti-Nuke", value="`/warn` `/kick` `/ban` `/timeout` `/clear` `/antinuke` `/antinukewhitelist` `/unquarantine`", inline=False)
     embed.add_field(name="🎮 Fun & Utility", value="`!FLIP` `!ROLL` `/rps` `/8ball` `/userinfo` `/embed` `!update`", inline=False)
-    embed.set_footer(text="Developed by ACID | Binance UID: 1016468667")
+    embed.set_footer(text="Developed by ACID |BUY ME COFFEE Binance UID: 1016468667")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Auto-Update Command
