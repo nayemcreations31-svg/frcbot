@@ -373,6 +373,36 @@ async def unquarantine(interaction: discord.Interaction, member: discord.Member)
     else:
         await interaction.response.send_message(f"⚠️ No saved role record found.", ephemeral=True)
 
+@bot.tree.command(name="automodwhitelist", description="Add or remove a member from the Auto-Mod whitelist")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.choices(action=[
+    app_commands.Choice(name="Add", value="add"),
+    app_commands.Choice(name="Remove", value="remove"),
+])
+async def automodwhitelist(interaction: discord.Interaction, action: str, member: discord.Member):
+    config = get_server_config(interaction.guild.id)
+    whitelist = config.setdefault("automod_whitelist", [])
+
+    if action == "add":
+        if member.id in whitelist:
+            await interaction.response.send_message(f"⚠️ {member.mention} is already in the Auto-Mod whitelist.", ephemeral=True)
+            return
+        whitelist.append(member.id)
+        result = f"✅ {member.mention} added to the Auto-Mod whitelist."
+        log_message = f"{member.mention} added to the Auto-Mod whitelist by {interaction.user.mention}"
+    else:
+        if member.id not in whitelist:
+            await interaction.response.send_message(f"⚠️ {member.mention} is not in the Auto-Mod whitelist.", ephemeral=True)
+            return
+        whitelist.remove(member.id)
+        result = f"❌ {member.mention} removed from the Auto-Mod whitelist."
+        log_message = f"{member.mention} removed from the Auto-Mod whitelist by {interaction.user.mention}"
+
+    save_db(db)
+    await interaction.response.send_message(result, ephemeral=True)
+    await send_log(interaction.guild, "mod_log_channel", "🛡️ Auto-Mod Whitelist Updated", log_message, color=discord.Color.blue())
+
 # --- Anti-Nuke Event Listeners (Channel, Role, Ban, Kick, Admin Perms) ---
 
 @bot.event
@@ -554,7 +584,7 @@ async def on_message(message):
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(title="🤖 Bot Commands", description="Available features:", color=discord.Color.purple())
     embed.add_field(name="⚙️ Setup & Logs", value="`/setprefix` `/setmodlog` `/setantinukelog` `/setquarantinerole` `/setwelcomechannel` `/setwelcomemessage` `/setnicknamechannel`", inline=False)
-    embed.add_field(name="🛡️ Moderation & Anti-Nuke", value="`/warn` `/kick` `/ban` `/timeout` `/clear` `/antinuke` `/antinukewhitelist` `/unquarantine`", inline=False)
+    embed.add_field(name="🛡️ Moderation & Anti-Nuke", value="`/warn` `/kick` `/ban` `/timeout` `/clear` `/antinuke` `/antinukewhitelist` `/automodwhitelist` `/unquarantine`", inline=False)
     embed.add_field(name="🎮 Fun & Utility", value="`!FLIP` `!ROLL` `/rps` `/8ball` `/userinfo` `/embed` `!update`", inline=False)
     embed.set_footer(text="Developed by ACID |BUY ME COFFEE Binance UID: 1016468667")
     await interaction.response.send_message(embed=embed, ephemeral=True)
